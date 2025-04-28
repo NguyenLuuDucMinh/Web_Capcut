@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
-from app.services.video_processing import process_videos
+from app.services.video_processing import process_video
+
 import shutil
 import os
 import uuid
@@ -46,7 +47,7 @@ async def upload_files(
     output_path = os.path.join(OUTPUT_DIR, f"{session_id}_output.mp4")
 
     # Run processing in background
-    background_tasks.add_task(process_videos, audio_path, srt_path, video_paths, output_path)
+    background_tasks.add_task(process_video, audio_path, srt_path, video_paths, output_path)
 
     # Return the output path for download later
     return {"message": "Processing started", "download_url": f"/download/{session_id}_output.mp4"}
