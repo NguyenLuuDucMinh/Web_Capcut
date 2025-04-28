@@ -1,4 +1,5 @@
 BACK end
+-pip install aiofiles
 -python -m venv venv
 -.\venv\Scripts\activate
 -pip install fastapi uvicorn ffmpeg-python python-multipart
