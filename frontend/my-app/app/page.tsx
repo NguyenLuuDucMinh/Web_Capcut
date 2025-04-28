@@ -12,7 +12,7 @@ export default function RootPage() {
          Công cụ giúp bạn dễ dàng biến podcast, các video clip ngắn và phụ đề thành một video hoàn chỉnh.
        </p>
        <Link
-         href="/upload/uploadForm"
+         href="/Upload"
          className="inline-flex items-center px-8 py-3 bg-gradient-to-r from-primary to-secondary text-white font-semibold rounded-lg shadow-lg hover:shadow-primary/40 transition-all duration-300 transform hover:scale-105"
        >
          Bắt đầu tạo Video
