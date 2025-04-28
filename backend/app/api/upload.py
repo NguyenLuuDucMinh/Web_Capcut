@@ -1,7 +1,8 @@
 # backend/app/api/upload.py
 
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse
+# Sửa lại import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 import shutil
 import os
 import uuid
@@ -27,15 +28,10 @@ router = APIRouter(
 )
 
 # --- Định nghĩa các thư mục một cách rõ ràng hơn ---
-# Xác định thư mục gốc của backend (nơi chứa thư mục app, temp_uploads, temp_outputs)
-# Giả sử file này nằm trong backend/app/api/upload.py
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Tạo đường dẫn tuyệt đối cho các thư mục
 UPLOAD_DIR = os.path.join(BACKEND_ROOT, "temp_uploads")
 OUTPUT_DIR = os.path.join(BACKEND_ROOT, "temp_outputs")
 
-# Tạo các thư mục nếu chưa tồn tại
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 logger.info(f"Absolute Upload directory: {os.path.abspath(UPLOAD_DIR)}")
@@ -43,9 +39,8 @@ logger.info(f"Absolute Output directory: {os.path.abspath(OUTPUT_DIR)}")
 
 
 # --- Endpoint để Upload và Xử lý ---
-# Giữ route là "/upload" vì log 404 trước đó cho thấy frontend gọi vào đây
 @router.post("/upload")
-async def upload_and_process_files( # Đổi tên hàm cho rõ ràng
+async def upload_and_process_files(
     background_tasks: BackgroundTasks,
     audio: UploadFile = File(..., description="Audio file (MP3, WAV, etc.)"),
     srt: UploadFile = File(..., description="SRT subtitle file"),
@@ -57,7 +52,6 @@ async def upload_and_process_files( # Đổi tên hàm cho rõ ràng
     (Endpoint: /api/upload)
     """
     session_id = str(uuid.uuid4())
-    # Tạo thư mục upload cho session này bên trong UPLOAD_DIR đã định nghĩa
     session_upload_dir = os.path.join(UPLOAD_DIR, session_id)
     os.makedirs(session_upload_dir, exist_ok=True)
     logger.info(f"Created session upload directory: {session_upload_dir}")
@@ -65,12 +59,11 @@ async def upload_and_process_files( # Đổi tên hàm cho rõ ràng
     saved_audio_path = ""
     saved_srt_path = ""
     saved_video_paths = []
-    files_to_cleanup_on_error = [session_upload_dir] # Luôn xóa thư mục session
+    files_to_cleanup_on_error = [session_upload_dir]
 
     try:
         # --- Save audio asynchronously ---
         safe_audio_filename = f"audio_{session_id}_{audio.filename}"
-        # Lưu đường dẫn tuyệt đối
         saved_audio_path = os.path.abspath(os.path.join(session_upload_dir, safe_audio_filename))
         async with aiofiles.open(saved_audio_path, "wb") as f:
             content = await audio.read()
@@ -100,7 +93,7 @@ async def upload_and_process_files( # Đổi tên hàm cho rõ ràng
             async with aiofiles.open(video_path, "wb") as f:
                 content = await video.read()
                 await f.write(content)
-            saved_video_paths.append(video_path) # Lưu đường dẫn tuyệt đối
+            saved_video_paths.append(video_path)
             logger.info(f"Saved video file: {video_path}")
             files_to_cleanup_on_error.append(video_path)
 
@@ -109,15 +102,11 @@ async def upload_and_process_files( # Đổi tên hàm cho rõ ràng
 
         # --- Define final output path (absolute path) ---
         output_filename = f"output_{session_id}.mp4"
-        final_output_path = os.path.abspath(os.path.join(OUTPUT_DIR, output_filename)) # Đường dẫn tuyệt đối
+        final_output_path = os.path.abspath(os.path.join(OUTPUT_DIR, output_filename))
 
-        # --- Run processing in background with CORRECT parameter order ---
-        logger.info(f"Scheduling background task 'process_video' with:")
-        logger.info(f"  audio_path: {saved_audio_path}")
-        logger.info(f"  video_paths: {saved_video_paths}")
-        logger.info(f"  srt_path: {saved_srt_path}")
-        logger.info(f"  output_final_path: {final_output_path}")
-
+        # --- Run processing in background ---
+        logger.info(f"Scheduling background task 'process_video' with correct parameters...")
+        # ... (log các path như trước) ...
         background_tasks.add_task(
             process_video,
             saved_audio_path,
@@ -126,18 +115,49 @@ async def upload_and_process_files( # Đổi tên hàm cho rõ ràng
             final_output_path
         )
 
-        # --- Return success response ---
-        # Trả về 202 Accepted để báo xử lý ngầm
-        return {
-            "message": "Yêu cầu xử lý video đã được nhận và đang chạy ngầm.",
-            "detail": "Quá trình có thể mất vài phút. Kiểm tra link download sau.",
-            "output_filename": output_filename
-        }
+        # --- Return 202 Accepted response ---
+        # Sử dụng JSONResponse để đặt status code là 202
+        return JSONResponse(
+            status_code=202, # Explicitly set 202 Accepted
+            content={
+                "message": "Yêu cầu xử lý video đã được nhận và đang chạy ngầm.",
+                "detail": "Quá trình có thể mất vài phút. Vui lòng đợi...",
+                "output_filename": output_filename
+            }
+        )
 
     except Exception as e:
         logger.exception("Error during file saving or task scheduling.")
         cleanup_files_sync(files_to_cleanup_on_error)
         raise HTTPException(status_code=500, detail=f"Lỗi máy chủ nội bộ khi chuẩn bị xử lý: {e}")
+
+
+# --- Endpoint để kiểm tra trạng thái file ---
+@router.get("/check/{file_name}")
+async def check_file_status(file_name: str):
+    """
+    Checks if the generated output file exists and is ready.
+    """
+    logger.info(f"Checking status for filename: {file_name}")
+    if ".." in file_name or file_name.startswith(("/", "\\")):
+        logger.warning(f"Invalid filename check attempt: {file_name}")
+        raise HTTPException(status_code=400, detail="Tên file không hợp lệ.")
+
+    file_path = os.path.abspath(os.path.join(OUTPUT_DIR, file_name))
+    logger.info(f"Checking existence of: {file_path}")
+
+    if os.path.exists(file_path) and os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+        logger.info(f"File {file_name} exists and is ready.")
+        return {"ready": True, "filename": file_name}
+    else:
+        # Log chi tiết hơn lý do chưa sẵn sàng
+        if not os.path.exists(file_path):
+             logger.info(f"File {file_name} not found yet.")
+        elif not os.path.isfile(file_path):
+             logger.warning(f"Path exists but is not a file: {file_path}")
+        else: # File tồn tại nhưng size = 0
+             logger.warning(f"File {file_name} exists but size is 0. Assuming not ready.")
+        return {"ready": False, "filename": file_name}
 
 
 # --- Endpoint để Download file kết quả ---
@@ -146,28 +166,22 @@ async def download_file(file_name: str):
     """
     Downloads the generated video file.
     """
+    # ... (Code download như phiên bản trước, đã có log và kiểm tra) ...
     logger.info(f"Received download request for filename: {file_name}")
-    # Log giá trị OUTPUT_DIR được dùng trong endpoint này
     logger.info(f"OUTPUT_DIR used in download endpoint: {os.path.abspath(OUTPUT_DIR)}")
-
     if ".." in file_name or file_name.startswith(("/", "\\")):
         logger.warning(f"Attempted directory traversal: {file_name}")
         raise HTTPException(status_code=400, detail="Tên file không hợp lệ.")
-
-    # Tạo đường dẫn tuyệt đối để kiểm tra file
     file_path = os.path.abspath(os.path.join(OUTPUT_DIR, file_name))
     logger.info(f"Attempting to serve file from absolute path: {file_path}")
-
     if os.path.exists(file_path) and os.path.isfile(file_path):
         logger.info(f"File found. Returning FileResponse for: {file_path}")
         return FileResponse(path=file_path, media_type='video/mp4', filename=file_name)
     else:
-        # Log rõ lý do không tìm thấy
-        if not os.path.exists(file_path):
-            logger.error(f"File does NOT exist at path: {file_path}")
-        elif not os.path.isfile(file_path):
-             logger.error(f"Path exists but is NOT a file: {file_path}")
+        if not os.path.exists(file_path): logger.error(f"File does NOT exist at path: {file_path}")
+        elif not os.path.isfile(file_path): logger.error(f"Path exists but is NOT a file: {file_path}")
         raise HTTPException(status_code=404, detail="Không tìm thấy file được yêu cầu.")
+
 
 # --- Endpoint để liệt kê file kết quả ---
 @router.get("/results")
@@ -175,6 +189,7 @@ async def list_results():
     """
     Lists the files currently available in the output directory.
     """
+    # ... (Code list_results như phiên bản trước) ...
     logger.info(f"Listing results from directory: {os.path.abspath(OUTPUT_DIR)}")
     try:
         files = [f for f in os.listdir(OUTPUT_DIR) if os.path.isfile(os.path.join(OUTPUT_DIR, f))]
@@ -188,19 +203,12 @@ async def list_results():
 # --- Hàm tiện ích để dọn dẹp file (ĐỒNG BỘ) ---
 def cleanup_files_sync(paths_to_delete: list[str]):
     """Synchronous utility function to delete files/folders."""
+    # ... (Code cleanup_files_sync như phiên bản trước) ...
     logger.info(f"Cleanup task (sync) started for: {paths_to_delete}")
     for path in paths_to_delete:
         try:
-            # Chuyển thành đường dẫn tuyệt đối trước khi kiểm tra/xóa
             abs_path = os.path.abspath(path)
-            if not abs_path or not os.path.exists(abs_path):
-                logger.warning(f"Skipping cleanup for non-existent path: {path}")
-                continue
-            if os.path.isdir(abs_path):
-                shutil.rmtree(abs_path)
-                logger.info(f"Removed directory and contents: {abs_path}")
-            else:
-                os.remove(abs_path)
-                logger.info(f"Removed file: {abs_path}")
-        except Exception as e:
-            logger.error(f"Error during sync cleanup of path '{path}' (absolute: '{abs_path}'): {e}", exc_info=True)
+            if not abs_path or not os.path.exists(abs_path): continue
+            if os.path.isdir(abs_path): shutil.rmtree(abs_path); logger.info(f"Removed directory and contents: {abs_path}")
+            else: os.remove(abs_path); logger.info(f"Removed file: {abs_path}")
+        except Exception as e: logger.error(f"Error during sync cleanup of path '{path}' (absolute: '{abs_path}'): {e}", exc_info=True)
